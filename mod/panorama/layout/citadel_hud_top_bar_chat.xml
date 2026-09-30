@@ -5,7 +5,9 @@
 	布局反解出来的 XML，改动与 chat.xml 一致：挂样式/脚本 + 声明隐藏 HTML 桥面板 +
 	状态标签。
 
-	气泡里的文本节点 id 是 MessageText（在 ChatMessage 模板的 .TextContainer 里）。
+	基线：Deadlock Build 25614556（2026-09-30）。保留全部官方模板与节点，
+	包括目标英雄图标、Ping/冷却信息和输入中动画；引擎会直接查找这些节点。
+	气泡正文位于 ChatMessage 模板的 .TextContainer > .MessageWrapper > #MessageText。
 -->
 <root>
 	<styles>
@@ -26,15 +28,48 @@
 					<Panel class="ChatBubble">
 						<Panel class="TextContainer">
 							<Panel class="bubble_bg" />
-							<Label id="MessageText" />
+							<Panel class="MessageWrapper">
+								<Image id="TargetHeroImage" />
+								<Label id="MessageText" html="true" />
+							</Panel>
 						</Panel>
 						<CitadelHeroImage id="HeroImage" heroimagestyle="small" />
+					</Panel>
+					<Image id="PingStyleIcon" class="PingStyle" />
+					<Panel class="SubjectWrapper">
+						<Panel id="SubjectIconBG" class="IconBG">
+							<Image id="SubjectIcon" />
+							<Panel class="corrupted_frame" />
+						</Panel>
+						<Panel id="CooldownTimer">
+							<Label id="CooldownText" />
+						</Panel>
 					</Panel>
 					<Panel class="ResponsesContainer">
 						<Panel class="ResponsesBackground">
 							<Panel class="ThumbsUpIcon" />
 						</Panel>
 						<Panel id="ResponseHeroes" />
+					</Panel>
+				</Panel>
+			</Panel>
+		</snippet>
+		<snippet name="TypingIndicatorChatMessage">
+			<Panel class="ChatMessage">
+				<Panel id="ChatArrow" />
+				<Panel id="MessageContents">
+					<Panel class="ChatBubble">
+						<Panel class="TextContainer">
+							<Panel class="bubble_bg" />
+							<Panel class="MessageWrapper">
+								<Panel id="TypingAnim">
+									<Panel id="TypingDot1" class="dot" />
+									<Panel id="TypingDot2" class="dot" />
+									<Panel id="TypingDot3" class="dot" />
+								</Panel>
+							</Panel>
+						</Panel>
+						<CitadelHeroImage id="HeroImage" heroimagestyle="small" />
 					</Panel>
 				</Panel>
 			</Panel>

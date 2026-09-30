@@ -30,8 +30,13 @@ ROOT = SPEC_DIR.parent
 datas = []
 hiddenimports = []
 
-# 只读资源：术语表（Glossary 在启动时就要读）+ 默认配置模板 + README
-datas += [(str(ROOT / "data"), "data")]
+# 只收运行时读取的数据，避免把本机 benchmark 结果等临时文件带进玩家包。
+runtime_data = (
+    "glossary.json", "phrases.json", "phrases_zh.json", "slang.json",
+    "keep_as_is.json", "deadlock_zh2en.json", "zh_term_blocklist.json",
+    "en_term_blocklist.json", "gamenames.json",
+)
+datas += [(str(ROOT / "data" / name), "data") for name in runtime_data]
 datas += [(str(ROOT / "config.yaml"), ".")]
 datas += [(str(ROOT / "README.md"), ".")]
 

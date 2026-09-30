@@ -93,5 +93,6 @@ Buttons show hover and focus through a brighter border and surface. Enabled togg
 
 - Do keep labels tied to player tasks: incoming messages, outgoing input, provider, and model.
 - Do preserve stable control IDs and Panorama callbacks when changing the layout.
+- Do preserve the game's complete chat snippets and native panel hierarchy; Tongyi extends the host layouts without replacing the game's typing, ping, hero-icon, or cooldown behavior. The Build 25614556 fixtures and build preflight enforce this boundary.
 - Don't use color alone to claim the whole bridge is offline; the chat and top-bar scripts have separate channels.
 - Don't place controls over the message text or hide the bridge HTML panel with `visibility: collapse`.

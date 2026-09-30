@@ -2,8 +2,8 @@
 	chat.xml — Deadlock 聊天面板布局（通译 / Tongyi 的覆盖版本）
 
 	基线来自游戏自身的 panorama/layout/chat.vxml_c（用 Source 2 Viewer 反解回 XML），
-	除下面 4 处标注 [通译] 的改动外，结构与官方完全一致；官方结构一旦更新，
-	用 scripts/decompile_layouts.py 重新反解后照抄即可。
+	基线为 Build 25614556（2026-09-30）。除标注 [通译] 的扩展外保留官方结构；
+	官方结构更新时，重新反解并同步 tests/fixtures 中的基线，构建前校验模板兼容性。
 
 	游戏的聊天行是 C++ 侧按 <snippets> 里的模板实例化出来的，所以这里只负责：
 	  · 挂上我们自己的样式与脚本
@@ -38,7 +38,8 @@
 		</snippet>
 		<snippet name="ChatMessageContents_Ping">
 			<Panel class="Ping">
-				<Label id="PingLabel" text="{s:ping_text}" />
+				<Image id="TargetHeroImage" />
+				<Label id="PingLabel" text="{s:ping_text}" html="true" />
 			</Panel>
 		</snippet>
 		<snippet name="ChatMessageSender_HeroImage">

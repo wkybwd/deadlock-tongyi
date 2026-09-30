@@ -2263,6 +2263,14 @@
 		}
 		if (!isValid(row)) return false;
 		if (hasClass(row, "Ping")) return true;
+		// Build 25614556 的气泡共用 ChatMessage 模板，普通文字也有图标/冷却节点。
+		// 必须按引擎消息类型判断，不能看到 TargetHeroImage 就把所有聊天当作 Ping。
+		var bubble = findByClass(row, "ChatBubble");
+		var quickTypes = ["MessageType_AbilityPing", "MessageType_MapPing",
+			"MessageType_PingWheel", "MessageType_ItemDraftReaction"];
+		for (var i = 0; i < quickTypes.length; i++) {
+			if (hasClass(row, quickTypes[i]) || hasClass(bubble, quickTypes[i])) return true;
+		}
 		var any = null;
 		try { any = row.FindChildTraverse("PingLabel"); } catch (e) {}
 		return isValid(any);
@@ -2299,19 +2307,20 @@
 			// ② 头顶气泡行：没有 MessageSource，发送者拿不到。
 			//
 			// 官方布局（build_mod\vanilla\panorama\layout\citadel_hud_top_bar_chat.xml）：
-			//   ChatMessage > #MessageContents > .ChatBubble > .TextContainer > Label#MessageText
+			//   ChatMessage > #MessageContents > .ChatBubble > .TextContainer > .MessageWrapper > Label#MessageText
 			// 官方样式（citadel_hud_top_bar_chat.vcss_c）里明确写着：
 			//   .ChatMessage #MessageContents { flow-children: down; }
 			//   .ChatMessage .ChatBubble .TextContainer { min-height: 24px; max-width: 240px; ... }
 			// 所以译文挂在 **#MessageContents** 上最稳：它是纵向流，译文天然排在气泡正下方，
 			// 而且不会挤进 .TextContainer 里跟 .bubble_bg（width/height:100%）抢位置。
 			var bubble = findByClass(row, "ChatBubble") || row;
-			var textLabel = null;
 			try { textLabel = bubble.FindChildTraverse("MessageText"); } catch (e) {}
+			// 输入中动画没有正文节点；不得退回整棵子树收字，否则会翻译冷却/状态文字。
+			if (!isValid(textLabel) || hasClass(row, "MessageType_PlayerTyping")) return null;
 			var box = null;
 			try { box = row.FindChildTraverse("MessageContents"); } catch (e) {}
 			contents = box || bubble;
-			text = readText(textLabel) || collectText(bubble);
+			text = readText(textLabel);
 			surface = "bubble";
 		} else {
 			// ① 聊天窗行

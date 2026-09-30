@@ -192,6 +192,12 @@ python scripts\stage_compile.py --pack     :: 只编译打包，不碰 addons
 
 ## 排查
 
+**2026-09-30 大版本更新：** 如果弹出 `Unable to find child 'TargetHeroImage'` 或
+`Unable to load snippet TypingIndicatorChatMessage`，是旧 mod 覆盖了新版官方聊天布局。
+请安装适配 Build 25614556 的新包；只重启桥或重填 Key 无法解决。DMM 清单为空也不代表
+`addons` 没有旧 VPK：先退出游戏，备份并移出未被 DMM 管理的旧通译包，再只导入一份新包。
+需要临时恢复原版时使用 DMM 的 Launch Without Mods，不要把旧版 `gameinfo.gi.bak` 整份覆盖回来。
+
 | 现象 | 原因 / 处理 |
 |------|-------------|
 | 状态行一直"桥未运行" | 桥没起、或被 DMM/杀软拦了；桥开着时跑 `python scripts\bridge_selftest.py` 验证 |

@@ -2,6 +2,8 @@
   通译（Tongyi）—— 《Deadlock》聊天实时汉化
 ================================================
 
+版本 v0.2.3：适配 2026-09-30 的 Deadlock Build 25614556。
+
 别人发的英文，聊天框里直接显示中文；
 你打的中文，也能转成英文发出去。
 
@@ -45,14 +47,14 @@
 
   第 3 步  填一次翻译用的 Key
 
-      先开一次游戏，然后浏览器打开：
+      在 DMM 点击 Launch Modded 开一次游戏，然后浏览器打开：
 
           http://localhost:8791/settings
 
       把你自己的 DeepSeek Key 粘进去保存（注册：https://platform.deepseek.com）
       Key 只存在你自己电脑上，不会发给任何人，也不在这个包里。
 
-  完成。以后照常点 Steam 的「开始游戏」，
+  完成。以后使用 DMM 的 Launch Modded 启动游戏，
   翻译器跟着游戏一起开，退出游戏后自动关。
 
 
@@ -135,6 +137,13 @@
 
   · 游戏里找不到「设置」按钮？
       说明汉化补丁没生效（那个按钮是补丁加上去的），回 DMM 看是不是启用状态。
+
+  · 更新游戏后出现 TargetHeroImage 或 TypingIndicatorChatMessage 的 FATAL ERROR？
+      这是旧版聊天布局与新版游戏不兼容。退出游戏，在 DMM 中移除旧版通译，
+      再导入本包的 mod\tongyi-pak01_dir.vpk，并使用 Launch Modded 启动。
+      如果仍报错，检查游戏 game\citadel\addons 是否残留旧通译的重复 VPK；
+      先备份，仅移出确认属于旧通译的文件，不要清空其他 mod。
+      Steam 启动选项也要保留 START_HERE.bat 生成的内容，否则翻译桥不会随游戏启动。
 
   · 不想让它自动启动了？
       清空 Steam 的启动选项即可，游戏照常能玩，只是没有翻译。

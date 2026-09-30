@@ -427,15 +427,31 @@ function buildChatRow(container, opts) {
 }
 
 // 头顶气泡行，照 citadel_hud_top_bar_chat.xml 的 snippet：
-//   ChatMessage(类) > MessageContents[id] > ChatBubble(类) > TextContainer(类) > Label#MessageText
+//   ChatMessage > #MessageContents > .ChatBubble > .TextContainer > .MessageWrapper > #MessageText
 function buildBubbleRow(container, opts) {
   const o = opts || {};
   const row = build(container, "", ["ChatMessage"]);
+  row.AddClass(o.messageType || "MessageType_Text");
   const contents = build(row, "MessageContents");
   const bubble = build(contents, "", ["ChatBubble"]);
   const textContainer = build(bubble, "", ["TextContainer"]);
   build(textContainer, "", ["bubble_bg"]);
-  const textLabel = build(textContainer, "MessageText", [], o.text);
+  const wrapper = build(textContainer, "", ["MessageWrapper"]);
+  let textLabel = null;
+  if (o.messageType === "MessageType_PlayerTyping") {
+    const anim = build(wrapper, "TypingAnim");
+    for (let i = 1; i <= 3; i++) build(anim, "TypingDot" + i, ["dot"]);
+  } else {
+    build(wrapper, "TargetHeroImage").type = "Image";
+    textLabel = build(wrapper, "MessageText", [], o.text || "");
+    build(contents, "PingStyleIcon", ["PingStyle"]).type = "Image";
+    const subject = build(contents, "", ["SubjectWrapper"]);
+    const bg = build(subject, "SubjectIconBG", ["IconBG"]);
+    build(bg, "SubjectIcon").type = "Image";
+    build(bg, "", ["corrupted_frame"]);
+    const cooldown = build(subject, "CooldownTimer");
+    build(cooldown, "CooldownText", [], o.cooldown || "");
+  }
   if (o.localClient) build(row, "", ["SenderLocalClient"]);
   return { row: row, contents: contents, bubble: bubble, textContainer: textContainer,
     textLabel: textLabel };
@@ -624,6 +640,32 @@ section("识别层", function () {
   expect("识别层: 气泡行的 surface 要是 bubble", r6.out.indexOf('"s":"bubble"') !== -1, r6.out);
   bubbleRowForAttach = bub;
   note("识别层：别人说话会翻、自己发的跳过、Ping 跳过、同句只排一次、重复扫描 (+0)、气泡认得出");
+});
+
+section("新版聊天结构", function () {
+  const host = build(contextPanel, "DLChatNewLayoutTest");
+  const normal = buildBubbleRow(host, { text: "push now", cooldown: "Ready in 12s" });
+  const normalProbe = probeRow(normal.row);
+  expect("新版结构: 普通聊天含有图标节点仍须翻译，正文不能混入冷却文字",
+    normalProbe.indexOf('text="push now"') !== -1
+      && normalProbe.indexOf("quick_chat") === -1
+      && normalProbe.indexOf("Ready in") === -1, normalProbe);
+  for (const type of ["MessageType_AbilityPing", "MessageType_MapPing",
+    "MessageType_PingWheel", "MessageType_ItemDraftReaction"]) {
+    const ping = buildBubbleRow(host, { text: "Enemy missing", messageType: type });
+    const result = probeRow(ping.row);
+    expect("新版结构: 游戏消息 " + type + " 不参与翻译",
+      result.indexOf("quick_chat") !== -1, result);
+  }
+  const typing = buildBubbleRow(host, { messageType: "MessageType_PlayerTyping" });
+  // 即使状态子树里出现文字，也不能被识别成玩家正文。
+  build(typing.bubble, "TypingStatus", [], "Typing...");
+  expect("新版结构: 输入中动画没有可翻译正文", probeRow(typing.row) === "info=null",
+    probeRow(typing.row));
+  const empty = buildBubbleRow(host, { text: "", cooldown: "Ready in 12s" });
+  expect("新版结构: 空正文不能退回读取冷却标签", probeRow(empty.row) === "info=null",
+    probeRow(empty.row));
+  note("新版聊天：嵌套正文、四种系统消息、输入中动画和冷却文字均正确识别");
 });
 
 // ================================================================ ⑤ 挂载点

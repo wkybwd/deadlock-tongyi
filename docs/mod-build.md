@@ -157,6 +157,21 @@ VPK 的根是 **addon 目录**（`game/citadel_addons/<addon>/`），不是里�
 `citadel_hud_top_bar_chat.vxml_c` 反解出来的，改动处都标了 `[dlchat]`。
 Valve 更新 UI 后重新反解一次照着抄即可。
 
+### 2026-09-30 布局基线（Build 25614556）
+
+`tests/fixtures/game_build_25614556/` 保存从本机官方 VPK 反解的两份布局。
+`python scripts/check_mod_layouts.py` 对比官方模板、面板骨架和样式引用；
+`stage_compile.py` 已把这项检查接入编译前门禁。它是离线版本契约，不会自动判断后续游戏更新。
+
+本次新增 `TargetHeroImage`、`MessageWrapper`、Ping/冷却信息和
+`TypingIndicatorChatMessage` 模板，必须保留节点类型、层级与属性；缺少节点或模板会直接
+触发游戏 FATAL ERROR。不能只在根节点补同名空面板。后续更新应先反解官方布局、核对差异，
+再更新源码与测试基线，并验证重新编译的 VPK，而不是仅放宽校验。
+
+运行逻辑按 `MessageType_AbilityPing/MapPing/PingWheel/ItemDraftReaction` 跳过系统消息，
+输入中动画没有正文，气泡只读取 `MessageText`。图标和冷却节点也存在于普通聊天模板中，
+不能用这些节点是否存在来判断消息类型。
+
 ## 六、诊断日志开关（`DEBUG`）
 
 `mod/panorama/scripts/dlchat.js` 顶部有 `var DEBUG = false;`。

@@ -10,7 +10,9 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/17601413731/deadlock-tongyi/releases/latest) 下载最新版 `tongyi-players.zip`。这是 Windows 玩家安装包，包含翻译桥和游戏内 mod，**无需安装 Python**。
+从 [GitHub Releases](https://github.com/wkybwd/deadlock-tongyi/releases/latest) 下载最新版 `tongyi-players.zip`。这是 Windows 玩家安装包，包含翻译桥和游戏内 mod，**无需安装 Python**。
+
+`v0.2.3` 已适配 2026-09-30 的游戏大版本（Build 25614556），修复旧聊天布局引起的启动崩溃。已有用户需在 DMM 中移除旧版通译，再导入新版 VPK。
 
 **推荐使用默认的 DeepSeek API。** 使用前需到 [DeepSeek 开放平台](https://platform.deepseek.com/)充值购买 API 调用额度，并创建自己的 **API Key（Token）**。安装包不包含 Key；API 调用[按用量计费](https://api-docs.deepseek.com/quick_start/pricing/)。
 
@@ -19,7 +21,9 @@
 1. 将 ZIP 解压到普通文件夹，避免放在 `Program Files`。
 2. 双击 `tongyi_launch\START_HERE.bat`。脚本会把 Steam 启动选项复制到剪贴板；在 Steam 中打开「库 → Deadlock → 属性 → 启动选项」，按 `Ctrl+V` 粘贴。
 3. 安装 [Deadlock Mod Manager（DMM）](https://deadlockmods.app/)。在 **My Mods → 添加本地 mod** 中选择解压后的 `mod\tongyi-pak01_dir.vpk` 文件，再到「我的模组」里启用通译。
-4. 启动游戏，再在浏览器打开 [本机设置页](http://localhost:8791/settings)，粘贴你的 DeepSeek API Key 并保存。设置页只在游戏运行、翻译桥启动后可访问。
+4. 在 DMM 点击 **Launch Modded** 启动游戏，再在浏览器打开 [本机设置页](http://localhost:8791/settings)，粘贴你的 DeepSeek API Key 并保存。设置页只在游戏运行、翻译桥启动后可访问。
+
+游戏大版本更新后，请使用适配新版的通译 VPK，并通过 DMM 重新应用加载配置。如果出现 `TargetHeroImage` 或 `TypingIndicatorChatMessage` 的 FATAL ERROR，说明仍加载了旧聊天布局；卸载旧版后还需检查 `addons` 中是否残留重复包，详见 [mod 排查说明](docs/mod-usage.md#排查)。
 
 ## 使用
 

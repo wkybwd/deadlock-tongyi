@@ -196,6 +196,10 @@ def preflight(content_pano: Path) -> list[str]:
         except ET.ParseError as e:
             problems.append(f"{xml.name}: XML 不合法 -> {e}")
 
+    # XML 良构不能保证引擎兼容：缺少官方节点/模板会让游戏直接退出。
+    from scripts.check_mod_layouts import check_layouts
+    problems.extend(check_layouts(content_pano / "layout"))
+
     # 离线跑一遍 mod 脚本：用桩替换 Panorama API，执行 boot + 每个按钮入口，
     # 并校验布局里的 onactivate 都能在脚本里找到。这类"游戏里静默失效"的问题
     # （少个字段就整块卡住、按钮点了没反应）必须在这里拦住。
