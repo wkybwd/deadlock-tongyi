@@ -12,7 +12,9 @@
 
 从 [GitHub Releases](https://github.com/wkybwd/deadlock-tongyi/releases/latest) 下载最新版 `tongyi-players.zip`。这是 Windows 玩家安装包，包含翻译桥和游戏内 mod，**无需安装 Python**。
 
-`v0.2.3` 已适配 2026-09-30 的游戏大版本（Build 25614556），修复旧聊天布局引起的启动崩溃。已有用户需在 DMM 中移除旧版通译，再导入新版 VPK。
+`v0.2.4` 修复 2026-10 游戏更新后一直显示「面板未加载」「当前界面暂未联通」的问题，改用本机图片通信，并保留 2026-09-30 新版聊天布局兼容修复。
+
+**已有用户更新：**退出游戏，使用新版 ZIP 中的 `tongyi_launch` 启动器文件，并在 DMM 移除旧版通译、导入新版 VPK；翻译桥和模组必须一起更新。保留个人配置，已有 API Key 无需重填。若更换启动器目录，重新运行 `START_HERE.bat` 并粘贴 Steam 启动选项。源码构建说明见 [launcher.md](docs/launcher.md) 和 [mod-build.md](docs/mod-build.md)。
 
 **推荐使用默认的 DeepSeek API。** 使用前需到 [DeepSeek 开放平台](https://platform.deepseek.com/)充值购买 API 调用额度，并创建自己的 **API Key（Token）**。安装包不包含 Key；API 调用[按用量计费](https://api-docs.deepseek.com/quick_start/pricing/)。
 

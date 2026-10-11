@@ -60,6 +60,7 @@ from ..settings import (MODEL_FIELDS, PROVIDERS, AppSettings, apply_to_config,
                         provider_models, reset_settings, save_settings, separator_text,
                         settings_path)
 from .settings_page import PAGE as SETTINGS_PAGE
+from .image_ipc import IPCError, ImageIPC, MAX_PARTS, png_bytes, validate_id
 from ..translate.cache import TranslationCache
 from ..translate.client import ChatTranslator, describe_error
 
@@ -952,6 +953,7 @@ def bridge_page(params: dict[str, list[str]]) -> str:
 
 class _Handler(BaseHTTPRequestHandler):
     app: BridgeApp                      # 由 BridgeServer 注入
+    image_ipc: ImageIPC
     server_version = "dlchat-bridge/" + BRIDGE_VERSION
 
     # 访问日志：游戏里的隐藏 HTML 面板到底有没有来访问过桥？
@@ -973,6 +975,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     # 静音默认的 stderr 访问日志
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
+        # parse_request may reject an HTTP version before assigning self.path.
+        # Its default error logger still includes the original query string.
+        words = getattr(self, "requestline", "").split()
+        target = getattr(self, "path", "") or (words[1] if len(words) > 1 else "")
+        if "/ipc/" in target.split("?", 1)[0]:
+            return
         logger.debug("bridge: " + fmt, *args)
 
     # ---- 工具 ----
@@ -1030,6 +1038,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/ipc/"):
+            self._image_request(parsed.path, parsed.query)
+            return
         query = parse_qs(parsed.query)
         self._access_log()
         if parsed.path == "/bridge":
@@ -1048,80 +1059,122 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/ipc/"):
+            self._json({"ok": False, "error": "ipc_get_required"}, 405)
+            return
         query = parse_qs(parsed.query)
         self._access_log()
         self._dispatch(parsed.path, query, self._read_body())
 
-    def _dispatch(self, path: str, query: dict[str, list[str]], body: Any) -> None:
-        app = self.app
+    def _image_request(self, path: str, raw_query: str) -> None:
+        # These URLs may contain chat text or settings. Do not send them through
+        # either access logger, including on malformed requests.
         try:
-            if path == "/api/v1/health":
-                self._json(app.health())
+            if len(raw_query) > MAX_BODY - 1024:
+                raise IPCError(400, "ipc_query_too_large")
+            query = parse_qs(raw_query, keep_blank_values=True, max_num_fields=8,
+                             errors="strict")
+
+            def one(key: str) -> str:
+                values = query.get(key) or []
+                if len(values) != 1 or not values[0]:
+                    raise IPCError(400, "ipc_bad_query")
+                return values[0]
+
+            if path == "/ipc/probe.png":
+                self._send(200, png_bytes(17, 29), "image/png")
                 return
-            if path == "/api/v1/gamenames":
-                self._json(app.game_names())
+            if path not in ("/ipc/start.png", "/ipc/read.png"):
+                raise IPCError(404, "ipc_not_found")
+            request_id = one("id")
+            validate_id(request_id)
+            if path == "/ipc/start.png":
+                op = one("op")
+                if op not in ALLOWED_OPS:
+                    raise IPCError(400, "ipc_bad_op")
+
+                def reject_constant(value: str) -> None:
+                    raise ValueError("Non-finite JSON number")
+
+                try:
+                    payload = json.loads(one("d"), parse_constant=reject_constant)
+                except (ValueError, RecursionError):
+                    raise IPCError(400, "ipc_bad_json") from None
+                if not isinstance(payload, dict):
+                    raise IPCError(400, "ipc_bad_json")
+                self.image_ipc.start(request_id, op, payload)
+                self._send(200, png_bytes(1, 1), "image/png")
                 return
-            if path == "/api/v1/config":
-                self._json(app.config_view())
-                return
-            if path in ("/api/v1/translate", "/api/v1/test"):
-                payload = self._body_from_query(query, body, path)
-                if path.endswith("/test"):
-                    self._json(app.test())
-                    return
-                if not payload or not str(payload.get("text", "")).strip():
-                    self._json({"ok": False, "error": "bad_json"}, 400)
-                    return
-                result = app.translate(
-                    str(payload.get("text", "")),
-                    str(payload.get("sourceLanguage") or "auto"),
-                    str(payload.get("targetLanguage") or "zh-Hans"),
-                )
-                self._json(result, 200 if result.get("ok") else 502)
-                return
-            if path == "/api/v1/settings":
-                payload = self._body_from_query(query, body, path) or {}
-                # 有 view 字段 = 读；否则（带真实设置字段）= 写
-                if not payload or payload.get("view"):
-                    self._json(app.settings_view(
-                        compact=payload.get("view") == "compact"))
-                else:
-                    self._json(app.update_settings(payload))
-                return
-            if path == "/api/v1/settings/test":
-                payload = self._body_from_query(query, body, path) or {}
-                self._json(app.settings_test(str(payload.get("text")
-                                                or "he is low, dive him")))
-                return
-            if path == "/api/v1/models":
-                # 面板切来源时带 ?d={"provider":"deepseek"}（也接受单字母码 "d"）：
-                # 按**面板上的**来源回列表，而不是当前生效的来源（用户还没点保存）。
-                payload = self._body_from_query(query, body, path) or {}
-                raw = payload.get("provider") or payload.get("prv") or payload.get("pv")
-                self._json(app.list_models(decode_provider(raw)))
-                return
-            if path == "/api/v1/log":
-                # 游戏侧诊断通道：GET 读日志，POST/GET?d= 写一条日志
-                payload = self._body_from_query(query, body, path)
-                if payload and (payload.get("msg") or payload.get("op")):
-                    if payload.get("op") == "read":
-                        self._json(app.read_game_log(
-                            float(payload.get("since") or 0),
-                            int(payload.get("limit") or 200)))
-                        return
-                    if payload.get("op") == "clear":
-                        self._json(app.clear_game_log())
-                        return
-                    self._json(app.record_game_log(payload))
-                    return
-                self._json(app.read_game_log(
-                    float((query.get("since") or [0])[0] or 0),
-                    int((query.get("limit") or [200])[0] or 200)))
-                return
-            self._json({"ok": False, "error": "not_found"}, 404)
-        except Exception as e:  # noqa: BLE001
-            logger.exception("桥内部错误")
-            self._json({"ok": False, "error": f"internal_error: {e}"}, 500)
+            part_text = one("part")
+            if not part_text.isascii() or not part_text.isdecimal() or len(part_text) > 5:
+                raise IPCError(400, "ipc_bad_part")
+            part = int(part_text)
+            if part >= MAX_PARTS:
+                raise IPCError(400, "ipc_bad_part")
+            # The cache-busting nonce does not select or execute a job.
+            if "nonce" in query:
+                validate_id(one("nonce"))
+            first, second = self.image_ipc.read_pair(request_id, part)
+            self._send(200, png_bytes(first + 1, second + 1), "image/png")
+        except IPCError as error:
+            self._json({"ok": False, "error": error.error}, error.status)
+        except (ValueError, UnicodeError):
+            self._json({"ok": False, "error": "ipc_bad_query"}, 400)
+
+    def _dispatch(self, path: str, query: dict[str, list[str]], body: Any) -> None:
+        result, status = _api_result(self.app, path, query, body)
+        self._json(result, status)
+
+
+def _api_result(app: BridgeApp, path: str, query: dict[str, list[str]], body: Any) -> tuple[Any, int]:
+    """Execute the same API operation for JSON HTTP and asynchronous image jobs."""
+    try:
+        if path == "/api/v1/health":
+            return app.health(), 200
+        if path == "/api/v1/gamenames":
+            return app.game_names(), 200
+        if path == "/api/v1/config":
+            return app.config_view(), 200
+        if path in ("/api/v1/translate", "/api/v1/test"):
+            payload = _Handler._body_from_query(query, body, path)
+            if path.endswith("/test"):
+                return app.test(), 200
+            if not payload or not str(payload.get("text", "")).strip():
+                return {"ok": False, "error": "bad_json"}, 400
+            result = app.translate(
+                str(payload.get("text", "")),
+                str(payload.get("sourceLanguage") or "auto"),
+                str(payload.get("targetLanguage") or "zh-Hans"),
+            )
+            return result, 200 if result.get("ok") else 502
+        if path == "/api/v1/settings":
+            payload = _Handler._body_from_query(query, body, path) or {}
+            if not payload or payload.get("view"):
+                return app.settings_view(compact=payload.get("view") == "compact"), 200
+            return app.update_settings(payload), 200
+        if path == "/api/v1/settings/test":
+            payload = _Handler._body_from_query(query, body, path) or {}
+            return app.settings_test(str(payload.get("text") or "he is low, dive him")), 200
+        if path == "/api/v1/models":
+            payload = _Handler._body_from_query(query, body, path) or {}
+            raw = payload.get("provider") or payload.get("prv") or payload.get("pv")
+            return app.list_models(decode_provider(raw)), 200
+        if path == "/api/v1/log":
+            payload = _Handler._body_from_query(query, body, path)
+            if payload and (payload.get("msg") or payload.get("op")):
+                if payload.get("op") == "read":
+                    return app.read_game_log(float(payload.get("since") or 0),
+                                             int(payload.get("limit") or 200)), 200
+                if payload.get("op") == "clear":
+                    return app.clear_game_log(), 200
+                return app.record_game_log(payload), 200
+            return app.read_game_log(
+                float((query.get("since") or [0])[0] or 0),
+                int((query.get("limit") or [200])[0] or 200)), 200
+        return {"ok": False, "error": "not_found"}, 404
+    except Exception as error:  # Exception messages can contain request secrets.
+        logger.error("桥内部错误（%s）", type(error).__name__)
+        return {"ok": False, "error": "internal_error"}, 500
 
 
 class _V6Server(ThreadingHTTPServer):
@@ -1134,11 +1187,14 @@ class BridgeServer:
     def __init__(self, app: BridgeApp, port: int = DEFAULT_PORT):
         self.app = app
         self.port = port
+        self.image_ipc = ImageIPC(lambda op, payload: _api_result(
+            self.app, "/api/v1/" + op, {}, payload)[0])
         self._servers: list[ThreadingHTTPServer] = []
         self._threads: list[threading.Thread] = []
 
     def start(self) -> int:
-        handler = type("_BoundHandler", (_Handler,), {"app": self.app})
+        handler = type("_BoundHandler", (_Handler,), {"app": self.app,
+                                                    "image_ipc": self.image_ipc})
         for cls, host in ((ThreadingHTTPServer, "127.0.0.1"), (_V6Server, "::1")):
             try:
                 srv = cls((host, self.port), handler)

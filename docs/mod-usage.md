@@ -192,6 +192,8 @@ python scripts\stage_compile.py --pack     :: 只编译打包，不碰 addons
 
 ## 排查
 
+**2026-10 HTML 通道变化：** 当前游戏会把 HTTP `SetURL` 地址替换成空白页，旧版因此一直显示「面板未加载」，桥日志也没有游戏请求。当前源码改用图片尺寸回传，回包有长度、CRC 和请求 ID 校验；必须同时更新桥启动器和 DMM 中的 VPK。该通道只访问本机，不需要安装证书。图片请求失败、回包校验失败和超时会在「连接与诊断」显示具体原因。
+
 **2026-09-30 大版本更新：** 如果弹出 `Unable to find child 'TargetHeroImage'` 或
 `Unable to load snippet TypingIndicatorChatMessage`，是旧 mod 覆盖了新版官方聊天布局。
 请安装适配 Build 25614556 的新包；只重启桥或重填 Key 无法解决。DMM 清单为空也不代表

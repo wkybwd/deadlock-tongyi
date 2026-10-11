@@ -1,6 +1,6 @@
 [project]
 name = "deadlock-tongyi"
-version = "0.2.3"
+version = "0.2.4"
 description = "Deadlock 聊天双向翻译：游戏内 mod + 本地翻译桥"
 requires-python = ">=3.10"
 # 只需要"翻译桥"这一条链路的东西。

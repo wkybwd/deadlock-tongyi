@@ -21,6 +21,22 @@
 	z-index: -1;
 }
 
+/* 图片通道必须参与布局才能回读 PNG 尺寸；不占父容器的流布局、不接收点击。 */
+.DLChatImageHost {
+	width: 300px;
+	height: 300px;
+	flow-children: none;
+	ignore-parent-flow: true;
+	opacity: 0.01;
+	position: 0px 0px 0px;
+}
+
+.DLChatImageSlot {
+	width: fit-children;
+	height: fit-children;
+	ignore-parent-flow: true;
+}
+
 /* ---------------------------------------------------------------- 译文 */
 
 /* 替换模式下的译文：颜色略微提亮，提示"这是译文"。

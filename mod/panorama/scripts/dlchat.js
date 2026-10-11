@@ -12,18 +12,17 @@
 // ---------------------------------------------------------------------------
 // Deadlock 移除了 $.AsyncWebRequest（函数还在，但一调用就同步抛
 // "AsyncWebRequest has been removed"），运行时 $.CreatePanel("HTML") 也拿不到可用的
-// HTML 面板。唯一可行通道：在布局里用 <HTML> 标签声明一个隐藏面板 -> SetURL 打开桥
-// 的 /bridge 页面 -> 页面 fetch 桥 API -> 把结果写进 document.title -> 这里轮询
-// panel.title。两个硬约束记下来免得再踩：
-//   1) 必须用 localhost，不能用 127.0.0.1（HTML 面板对回环 IP 有拦截）
-//   2) 通道同一时刻只能有一个在途请求（title 是单槽），所以传输层是串行队列
+// HTML 面板。2026-10 的引擎还会将 HTTP SetURL 改成 about:blank。
+// 当前使用 Image 的本机 HTTP 请求：PNG 宽高各携带一字节，等布局就绪后回读，
+// 整帧检查长度、CRC 和请求 id。固定图片池复用，业务请求仍用串行队列。
+// 旧引擎的直接 HTTP API 与标题通道保留兼容。
 // ===========================================================================
 
 (function () {
 	"use strict";
 
 	// ---------------------------------------------------------------- 配置
-	var BRIDGE_HOST = "localhost";     // 不用 127.0.0.1：见文件头注释
+	var BRIDGE_HOST = "localhost";
 	var BRIDGE_PORT = 8791;
 	var BRIDGE_BASE = "http://" + BRIDGE_HOST + ":" + BRIDGE_PORT;
 	var TITLE_PREFIX = "LCT";          // 与桥页面约定：title = LCT<id><json>
@@ -1660,6 +1659,8 @@
 	}
 
 	function diag() {
+		if (channel.mode === "image") return "P:image V:" + (imageChannel.ready ? 1 : 0)
+			+ " N:" + imageChannel.nonce + " F:" + bus.consecutiveFailures;
 		var p = channel.mode === "http"
 			? ("ok-" + (channel.httpStyle || "?"))
 			: (channel.probeError || "?").replace(/^threw:/, "threw");
@@ -1749,7 +1750,7 @@
 		var hasFn = false;
 		try { hasFn = typeof $.AsyncWebRequest === "function"; } catch (e) {}
 		if (!hasFn) {
-			channel.mode = "panel";
+			channel.mode = imageChannelAvailable() ? "image" : "panel";
 			channel.probeError = "no_fn";
 			return false;
 		}
@@ -1785,9 +1786,246 @@
 				channel.probeError += "|retry_threw";
 			}
 		}
-		channel.mode = "panel";
+		channel.mode = imageChannelAvailable() ? "image" : "panel";
 		return false;
 	}
+
+	function imageChannelAvailable() {
+		return typeof $.CreatePanel === "function" && typeof $.RegisterEventHandler === "function";
+	}
+
+	// PNG 尺寸通道：图片加载与布局是两个阶段，不能在 ImageLoaded 里直接读旧尺寸。
+	var imageChannel = {
+		host: null, slots: [], ready: false, fields: null, nonce: 0, layoutGrace: 0.15,
+		session: "i" + String(Date.now()) + "-" + Math.floor(Math.random() * 1000000000),
+		crcTable: null,
+
+		ensureHost: function () {
+			if (isValid(this.host)) return;
+			var root = $.GetContextPanel(), parent = root;
+			for (var depth = 0; depth < 16; depth++) {
+				var next = call0(parent, "GetParent");
+				if (!isValid(next) || next === parent) break;
+				parent = next;
+			}
+			var scope = isValid(root.FindChildTraverse("ChatInput")) ? "chat" : "topbar";
+			// Reuse a fixed host when the same layout is rebuilt; old callbacks check its owner token.
+			var hostId = "DLChatImageHost_" + scope;
+			var host = parent.FindChildTraverse(hostId);
+			if (!isValid(host)) host = $.CreatePanel("Panel", parent, hostId);
+			host.SetAttributeString("tongyi-image-owner", this.session);
+			host.AddClass("DLChatImageHost");
+			host.style.width = "300px"; host.style.height = "300px";
+			host.style.opacity = "0.01"; host.style.position = "0px 0px 0px";
+			host.style.flowChildren = "none"; host.style.ignoreParentFlow = "true";
+			host.hittest = false; host.hittestchildren = false;
+			this.host = host; this.slots = []; this.ready = false;
+			var self = this;
+			for (var i = 0; i < 16; i++) {
+				(function (index) {
+					var image = host.FindChildTraverse(hostId + "_" + index);
+					if (!isValid(image)) image = $.CreatePanel("Image", host, hostId + "_" + index);
+					image.AddClass("DLChatImageSlot");
+					image.style.width = "fit-children"; image.style.height = "fit-children";
+					image.style.ignoreParentFlow = "true"; image.hittest = false;
+					var slot = { panel: image, generation: 0, request: null };
+					self.slots.push(slot);
+					$.RegisterEventHandler("ImageLoaded", image, function () {
+						if (!self.ownsHost() || !slot.request) return;
+						slot.request.loaded = true;
+						slot.request.notBefore = nowSeconds() + self.layoutGrace;
+						slot.request.stable = null;
+					});
+					$.RegisterEventHandler("ImageFailedLoad", image, function () {
+						if (self.ownsHost() && slot.request) self.finishSlot(slot, "image_load_failed");
+					});
+				})(i);
+			}
+		},
+
+		ownsHost: function () {
+			return isValid(this.host) && this.host.GetAttributeString("tongyi-image-owner", "") === this.session;
+		},
+
+		finishSlot: function (slot, error, pair) {
+			var req = slot.request;
+			if (!req) return;
+			slot.request = null;
+			req.done(error, pair);
+		},
+
+		load: function (slot, url, deadline, fields, expected, done) {
+			var self = this, generation = ++slot.generation;
+			slot.request = { loaded: false, stable: null, deadline: deadline, done: done };
+			function poll() {
+				var req = slot.request;
+				if (!req || slot.generation !== generation) return;
+				if (!self.ownsHost()) { self.finishSlot(slot, "image_owner_changed"); return; }
+				if (nowSeconds() >= req.deadline) { self.finishSlot(slot, "image_timeout"); return; }
+				if (req.loaded && nowSeconds() >= req.notBefore) {
+					var candidates = fields ? [fields] : [
+						["contentwidth", "contentheight"], ["desiredlayoutwidth", "desiredlayoutheight"],
+						["actuallayoutwidth", "actuallayoutheight"]
+					];
+					for (var f = 0; f < candidates.length; f++) {
+						var w = Number(slot.panel[candidates[f][0]]), h = Number(slot.panel[candidates[f][1]]);
+						if (!isFinite(w) || !isFinite(h) || w < 1 || h < 1 || w > 256 || h > 256 ||
+							Math.abs(w - Math.round(w)) > 0.01 || Math.abs(h - Math.round(h)) > 0.01) continue;
+						w = Math.round(w); h = Math.round(h);
+						if (expected && (w !== expected[0] || h !== expected[1])) continue;
+						var key = candidates[f].join(":") + ":" + w + ":" + h;
+						if (req.stable === key) {
+							if (!fields) self.fields = candidates[f];
+							self.finishSlot(slot, null, [w - 1, h - 1]); return;
+						}
+						req.stable = key;
+						break;
+					}
+				}
+				$.Schedule(0.05, poll);
+			}
+			try {
+				slot.panel.SetImage(url + (url.indexOf("?") === -1 ? "?" : "&") + "nonce=" + (++this.nonce) + "-" + this.session);
+				$.Schedule(0.05, poll);
+			} catch (e) { this.finishSlot(slot, "image_request_failed"); }
+		},
+
+		crc32: function (bytes) {
+			if (!this.crcTable) {
+				this.crcTable = [];
+				for (var n = 0; n < 256; n++) {
+					var c = n;
+					for (var k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+					this.crcTable[n] = c >>> 0;
+				}
+			}
+			var crc = 0xffffffff;
+			for (var i = 0; i < bytes.length; i++) crc = this.crcTable[(crc ^ bytes[i]) & 255] ^ (crc >>> 8);
+			return (crc ^ 0xffffffff) >>> 0;
+		},
+
+		unpack: function (packed, rawLength) {
+			var out = [], at = 0;
+			while (at < packed.length) {
+				var token = packed[at++], count, distance;
+				if (token < 128) {
+					count = token + 1;
+					if (at + count > packed.length || out.length + count > rawLength) throw new Error("image_bad_frame");
+					while (count--) out.push(packed[at++]);
+				} else {
+					count = (token & 127) + 3;
+					if (at + 2 > packed.length) throw new Error("image_bad_frame");
+					distance = packed[at++] | (packed[at++] << 8);
+					if (!distance || distance > out.length || out.length + count > rawLength) throw new Error("image_bad_frame");
+					while (count--) out.push(out[out.length - distance]);
+				}
+			}
+			if (out.length !== rawLength) throw new Error("image_bad_frame");
+			return out;
+		},
+
+		send: function (job, done) {
+			var self = this, finished = false, retry = 0, frameGeneration = 0;
+			var deadline = nowSeconds() + (job.timeout || REQUEST_TIMEOUT);
+			function finish(result) {
+				if (finished) return;
+				finished = true;
+				for (var i = 0; i < self.slots.length; i++) self.slots[i].request = null;
+				done(result);
+			}
+			function fail(error) { finish({ ok: false, error: String(error) }); }
+			try { this.ensureHost(); } catch (e) { fail("image_unavailable"); return; }
+			$.Schedule(job.timeout || REQUEST_TIMEOUT, function () { fail("image_timeout"); });
+			function calibrate(after) {
+				if (self.ready) { after(); return; }
+				self.load(self.slots[0], BRIDGE_BASE + "/ipc/probe.png", deadline, null, [17, 29], function (error) {
+					if (finished) return;
+					if (error) { fail(error); return; }
+					self.ready = true; after();
+				});
+			}
+			function readPairs(first, count, after, onError) {
+				var pairs = [], next = 0, completed = 0, frameToken = frameGeneration;
+				function one(slot, partIndex, failures) {
+					if (finished || frameToken !== frameGeneration) return;
+					var url = BRIDGE_BASE + "/ipc/read.png?id=" + enc(job.id) + "&part=" + (first + partIndex);
+					self.load(slot, url, deadline, self.fields, null, function (error, pair) {
+						if (finished || frameToken !== frameGeneration) return;
+						if (error) {
+							// Header reads can be pending while the translator works. Data retries are bounded.
+							if (error === "image_load_failed" && nowSeconds() + 0.25 < deadline && (first === 0 || failures < 2)) {
+								$.Schedule(0.25, function () { one(slot, partIndex, failures + 1); }); return;
+							}
+							if (onError && error !== "image_timeout" && error !== "image_owner_changed") onError(error);
+							else fail(error);
+							return;
+						}
+						pairs[partIndex] = pair; completed++;
+						if (completed === count) {
+							var bytes = [];
+							for (var j = 0; j < pairs.length; j++) { bytes.push(pairs[j][0]); bytes.push(pairs[j][1]); }
+							after(bytes); return;
+						}
+						if (next < count) one(slot, next++, 0);
+					});
+				}
+				for (var i = 0; i < self.slots.length && next < count; i++) one(self.slots[i], next++, 0);
+			}
+			function frameError(error) {
+				if (retry++ === 0 && nowSeconds() + 1 < deadline) {
+					frameGeneration++;
+					for (var i = 0; i < self.slots.length; i++) self.slots[i].request = null;
+					// Slow layouts can still show the previous image after its new load event.
+					self.layoutGrace = 0.6;
+					self.ready = false; calibrate(readFrame); return;
+				}
+				fail(error);
+			}
+			function readFrame() {
+				if (finished) return;
+				frameGeneration++;
+				readPairs(0, 6, function (header) {
+					if (header[0] !== 84 || header[1] !== 89 || header[2] !== 73 || header[3] !== 49) {
+						frameError("image_bad_frame"); return;
+					}
+					var packedLength = header[4] | (header[5] << 8), rawLength = header[6] | (header[7] << 8);
+					var crc = (header[8] | (header[9] << 8) | (header[10] << 16) | (header[11] << 24)) >>> 0;
+					if (!packedLength || packedLength > 8256 || !rawLength || rawLength > 8192) {
+						frameError("image_bad_frame"); return;
+					}
+					readPairs(6, Math.ceil(packedLength / 2), function (bytes) {
+						try {
+							var raw = self.unpack(bytes.slice(0, packedLength), rawLength);
+							if (self.crc32(raw) !== crc) throw new Error("image_bad_crc");
+							var escaped = "";
+							for (var i = 0; i < raw.length; i++) escaped += "%" + ("0" + raw[i].toString(16)).slice(-2);
+							var envelope = JSON.parse(decodeURIComponent(escaped));
+							if (envelope.id !== job.id || !envelope.result || typeof envelope.result.ok !== "boolean") {
+								throw new Error("image_bad_identity");
+							}
+							finish(envelope.result);
+						} catch (e) { frameError(e.message || "image_bad_frame"); }
+					}, frameError);
+				});
+			}
+			calibrate(function () {
+				var url = BRIDGE_BASE + "/ipc/start.png?id=" + enc(job.id) + "&op=" + enc(job.op)
+					+ "&d=" + enc(JSON.stringify(job.payload || {}));
+				function start(attempt) {
+					if (finished) return;
+					self.load(self.slots[0], url, deadline, self.fields, [1, 1], function (error) {
+						if (finished) return;
+						if (error) {
+							if (attempt < 2 && error === "image_load_failed") { $.Schedule(0.25, function () { start(attempt + 1); }); return; }
+							fail(error); return;
+						}
+						readFrame();
+					});
+				}
+				start(0);
+			});
+		}
+	};
 
 	// ---------------------------------------------------------------- 传输层
 	// 串行队列 + 唯一请求 id：title 是单槽通道，靠 id 前缀区分"这是谁的响应"，
@@ -1879,6 +2117,11 @@
 				this.sendViaHttp(job);
 				return;
 			}
+			if (channel.mode === "image") {
+				this.queue.shift();
+				this.sendViaImage(job);
+				return;
+			}
 			var panel = this.findPanel();
 			if (!panel || typeof panel.SetURL !== "function") {
 				this.queue.shift();
@@ -1887,6 +2130,19 @@
 			}
 			this.queue.shift();
 			this.sendViaPanel(job, panel);
+		},
+
+		sendViaImage: function (job) {
+			var self = this;
+			job.id = imageChannel.session + "-" + (++this.seq);
+			this.inflight = job;
+			function settle(result) {
+				if (self.inflight !== job) return;
+				self.inflight = null;
+				self.applyResult(job, result);
+			}
+			try { imageChannel.send(job, settle); }
+			catch (e) { settle({ ok: false, error: "image_unavailable" }); }
 		},
 
 		// ---- 通道 1：引擎 HTTP 直连（每条请求独立，最可靠）----
@@ -1932,11 +2188,11 @@
 					this.callWithCallback(channel.cbShape, url, job, settle, parse);
 					return;
 				}
-				channel.mode = "panel";             // 探测通过但这里没给可用对象
+				channel.mode = imageChannelAvailable() ? "image" : "panel";
 				channel.probeError = "no_promise_at_call";
 				settle({ ok: false, error: "http_no_promise" });
 			} catch (e) {
-				channel.mode = "panel";                 // 直连真抛了，退回面板通道
+				channel.mode = imageChannelAvailable() ? "image" : "panel";
 				channel.probeError = "call_threw:" + e;
 				settle({ ok: false, error: "http_threw" });
 			}
@@ -2067,7 +2323,7 @@
 			if (result && result.ok) {
 				this.consecutiveFailures = 0;
 				this.bridgeUp = true;
-			} else if (job.op === "health" || /timeout|seturl|no_bridge_panel|http_failed|http_threw/.test(err)) {
+			} else if (job.op === "health" || /timeout|seturl|no_bridge_panel|http_failed|http_threw|image_/.test(err)) {
 				this.consecutiveFailures += 1;
 			}
 			if (this.consecutiveFailures >= 2) this.bridgeUp = false;
@@ -3464,6 +3720,11 @@
 		if (e.indexOf("seturl_failed") === 0) return "SetURL 失败";
 		if (e.indexOf("http_failed") === 0) return "直连失败";
 		if (e.indexOf("http_threw") === 0 || e.indexOf("http_no_promise") === 0) return "直连不可用";
+		if (e === "image_timeout") return "图片通信超时";
+		if (e === "image_load_failed" || e === "image_request_failed") return "图片请求失败";
+		if (/^image_bad_/.test(e)) return "图片回包校验失败";
+		if (e === "image_unavailable" || e === "image_owner_changed") return "图片通道不可用";
+		if (e === "ipc_response_too_large") return "回包过长";
 		// 桥侧的机器码也要说人话：这些以前会原样透出（玩家看不懂 payload_too_long）
 		if (e.indexOf("payload_too_long") === 0) return "内容太长，通道装不下（换短句重试）";
 		if (e.indexOf("bridge_timeout") === 0) return "桥处理超时";
@@ -3479,8 +3740,8 @@
 
 	function showHealthResult(res) {
 			if (res && res.ok) {
-				status.show(channel.mode === "http" ? "通译 就绪（直连）"
-					: "通译 就绪（面板）", 4);
+				status.show(channel.mode === "image" ? "通译 就绪" : (channel.mode === "http"
+					? "通译 就绪（直连）" : "通译 就绪（面板）"), 4);
 			} else if (bus.bridgeUp) {
 				// 单次探测失败不能推翻同一界面的成功翻译。
 				status.show("通译 可用 · 状态检测稍后重试", 5);
@@ -3524,7 +3785,7 @@
 		var canHttp = probeHttpChannel();
 
 		// 主通道：HTML 面板事件。必须在任何导航之前注册，否则第一批事件会漏掉。
-		registerPanelEvents();
+		if (channel.mode === "panel") registerPanelEvents();
 		// 布局里的 onactivate 只能调到全局名字，这里把设置面板的入口挂上去
 		exportGlobals();
 		noHotkey();
@@ -3557,15 +3818,17 @@
 		});
 
 		if (!quiet) {
-			if (!panelFound && !canHttp) {
+			if (!panelFound && !canHttp && channel.mode !== "image") {
 				status.show("通译：没有可用通道（布局未生效？）", 15);
 				return;
 			}
-			status.show("通译 通道：" + (canHttp ? "直连" : "面板"), 6);
+			status.show(channel.mode === "image" ? "通译 正在连接…"
+				: "通译 通道：" + (canHttp ? "直连" : "面板"), 6);
 		}
 
 		var probeUrl = BRIDGE_BASE + "/api/v1/health";
 		function startRequests() {
+			if (channel.mode === "image") { healthTick(); return; }
 			if (channel.mode === "panel" && !quiet) {
 				status.show("通译 等面板显示…", 12);
 			}

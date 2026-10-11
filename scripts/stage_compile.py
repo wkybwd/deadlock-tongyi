@@ -204,11 +204,12 @@ def preflight(content_pano: Path) -> list[str]:
     # 并校验布局里的 onactivate 都能在脚本里找到。这类"游戏里静默失效"的问题
     # （少个字段就整块卡住、按钮点了没反应）必须在这里拦住。
     if node:
-        proc = subprocess.run([node, str(ROOT / "scripts" / "js_check.js")],
-                              capture_output=True, text=True, errors="replace",
-                              cwd=str(ROOT))
-        if proc.returncode != 0:
-            problems.append("js_check: " + (proc.stdout or proc.stderr).strip()[:600])
+        for check in ("js_check.js", "image_ipc_check.js"):
+            proc = subprocess.run([node, str(ROOT / "scripts" / check)],
+                                  capture_output=True, text=True, errors="replace",
+                                  cwd=str(ROOT))
+            if proc.returncode != 0:
+                problems.append(check + ": " + (proc.stdout or proc.stderr).strip()[:600])
 
     return problems
 
